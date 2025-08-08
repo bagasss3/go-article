@@ -4,7 +4,9 @@ import (
 	"context"
 
 	"github.com/bagasss3/go-article/internal/errors"
+	"github.com/bagasss3/go-article/internal/helper"
 	"github.com/bagasss3/go-article/pkg/model"
+	"github.com/sirupsen/logrus"
 
 	"github.com/google/uuid"
 )
@@ -22,8 +24,13 @@ func NewArticleService(articleRepository model.ArticleRepository, authorReposito
 }
 
 func (s *articleService) FindAll(ctx context.Context, filter model.ArticleQuery) ([]*model.Article, int, error) {
+	log := logrus.WithFields(logrus.Fields{
+		"filter": filter,
+	})
+
 	articles, total, err := s.articleRepository.FindAll(ctx, filter)
 	if err != nil {
+		log.Error(err)
 		return nil, 0, err
 	}
 
@@ -35,18 +42,27 @@ func (s *articleService) FindAll(ctx context.Context, filter model.ArticleQuery)
 }
 
 func (s *articleService) Create(ctx context.Context, req *model.CreateArticleRequest) (*model.Article, error) {
+	log := logrus.WithFields(logrus.Fields{
+		"req": helper.ToJSON(req),
+	})
+
 	authorID, err := uuid.Parse(req.AuthorID)
 	if err != nil {
-		return nil, errors.New(errors.ErrInvalidData, "invalid author id format")
+		err := errors.New(errors.ErrInvalidData, "invalid author id format")
+		log.Error(err)
+		return nil, err
 	}
 
 	author, err := s.authorRepository.FindByID(ctx, authorID)
 	if err != nil {
+		log.Error(err)
 		return nil, err
 	}
 
 	if author == nil {
-		return nil, errors.New(errors.ErrRecordNotFound, "author not found")
+		err := errors.New(errors.ErrRecordNotFound, "author not found")
+		log.Error(err)
+		return nil, err
 	}
 
 	article := &model.Article{
@@ -56,5 +72,11 @@ func (s *articleService) Create(ctx context.Context, req *model.CreateArticleReq
 		Body:     req.Body,
 	}
 
-	return s.articleRepository.Create(ctx, article)
+	result, err := s.articleRepository.Create(ctx, article)
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	return result, nil
 }

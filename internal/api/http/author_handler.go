@@ -8,6 +8,7 @@ import (
 	"github.com/bagasss3/go-article/pkg/model"
 	"github.com/bagasss3/go-article/pkg/response"
 	"github.com/labstack/echo/v4"
+	log "github.com/sirupsen/logrus"
 )
 
 type authorHandler struct {
@@ -32,15 +33,18 @@ func (h *authorHandler) create(c echo.Context) error {
 	var req *model.CreateAuthorRequest
 
 	if err := c.Bind(&req); err != nil {
+		log.Error(err)
 		return response.ResponseInterfaceError(c, http.StatusBadRequest, err.Error(), config.BadRequest)
 	}
 
 	if err := c.Validate(req); err != nil {
+		log.Error(err)
 		return response.ResponseInterfaceError(c, http.StatusBadRequest, config.BadRequest, helper.GetValueBetween(err.Error(), "Error:", "tag"))
 	}
 
 	result, err := h.authorService.Create(c.Request().Context(), req)
 	if err != nil {
+		log.Error(err)
 		return handleError(c, err)
 	}
 
@@ -52,6 +56,7 @@ func (h *authorHandler) getByID(c echo.Context) error {
 
 	result, err := h.authorService.FindByID(c.Request().Context(), id)
 	if err != nil {
+		log.Error(err)
 		return handleError(c, err)
 	}
 

@@ -9,8 +9,10 @@ import (
 )
 
 type MockCache struct {
-	store map[string][]byte
-	mu    sync.RWMutex
+	store          map[string][]byte
+	mu             sync.RWMutex
+	SetShouldError bool
+	DelShouldError bool
 }
 
 func NewMockCache() *MockCache {
@@ -20,6 +22,9 @@ func NewMockCache() *MockCache {
 }
 
 func (m *MockCache) Set(_ context.Context, key string, value any, _ time.Duration) error {
+	if m.SetShouldError {
+		return errors.New("mock set error")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -45,6 +50,9 @@ func (m *MockCache) Get(_ context.Context, key string, target any) error {
 }
 
 func (m *MockCache) Delete(_ context.Context, key string) error {
+	if m.DelShouldError {
+		return errors.New("mock delete error")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

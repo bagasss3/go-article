@@ -10,6 +10,7 @@ import (
 	"github.com/bagasss3/go-article/internal/infrastructure/cache"
 	"github.com/bagasss3/go-article/pkg/model"
 	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 type authorRepository struct {
@@ -38,12 +39,13 @@ func (r *authorRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.A
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
+		log.Error(err)
 		return nil, err
 	}
 
 	err = r.cache.Set(ctx, key, &author, config.RedisExpired())
 	if err != nil {
-
+		log.Error(err)
 	}
 
 	return &author, nil
@@ -55,6 +57,7 @@ func (r *authorRepository) Create(ctx context.Context, author *model.Author) (*m
 	query := `INSERT INTO authors (id, name) VALUES ($1, $2)`
 	_, err := r.db.ExecContext(ctx, query, author.ID, author.Name)
 	if err != nil {
+		log.Error(err)
 		return nil, err
 	}
 

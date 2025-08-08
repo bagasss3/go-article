@@ -10,6 +10,7 @@ import (
 	"github.com/bagasss3/go-article/internal/infrastructure/cache"
 	"github.com/bagasss3/go-article/pkg/model"
 	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 type articleRepository struct {
@@ -38,12 +39,9 @@ func (r *articleRepository) FindAll(ctx context.Context, filter model.ArticleQue
 	shouldCache := filter.Query == "" && filter.Page == 1 && cacheableLimit == model.CacheableLimit
 	var cacheKey string
 	if shouldCache {
-		cacheKey := fmt.Sprintf("%s:page=%d:limit=%d", model.ArticleKey, filter.Page, filter.Limit)
+		cacheKey = fmt.Sprintf("%s:page=%d:limit=%d", model.ArticleKey, filter.Page, filter.Limit)
 
-		var cached struct {
-			Results []*model.Article
-			Total   int
-		}
+		var cached model.CachedArticles
 		if err := r.cache.Get(ctx, cacheKey, &cached); err == nil {
 			return cached.Results, cached.Total, nil
 		}
@@ -102,6 +100,7 @@ func (r *articleRepository) FindAll(ctx context.Context, filter model.ArticleQue
 
 	rows, err := r.db.QueryContext(ctx, fullQuery, args...)
 	if err != nil {
+		log.Error(err)
 		return nil, 0, err
 	}
 	defer rows.Close()
@@ -110,6 +109,7 @@ func (r *articleRepository) FindAll(ctx context.Context, filter model.ArticleQue
 	for rows.Next() {
 		var a model.Article
 		if err := rows.Scan(&a.ID, &a.AuthorID, &a.Author, &a.Title, &a.Body, &a.CreatedAt); err != nil {
+			log.Error(err)
 			return nil, 0, err
 		}
 		results = append(results, &a)
@@ -119,14 +119,17 @@ func (r *articleRepository) FindAll(ctx context.Context, filter model.ArticleQue
 	var total int
 	err = r.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
+		log.Error(err)
 		return nil, 0, err
 	}
 
 	if shouldCache {
-		_ = r.cache.Set(ctx, cacheKey, struct {
-			Results []*model.Article
-			Total   int
-		}{results, total}, config.RedisExpired())
+		if err := r.cache.Set(ctx, cacheKey, model.CachedArticles{
+			Results: results,
+			Total:   total,
+		}, config.RedisExpired()); err != nil {
+			log.Warn("failed to cache articles")
+		}
 	}
 
 	return results, total, nil
@@ -150,10 +153,14 @@ func (r *articleRepository) Create(ctx context.Context, article *model.Article) 
 		article.Body,
 	).Scan(&article.CreatedAt)
 	if err != nil {
+		log.Error(err)
 		return nil, err
 	}
 
-	_ = r.cache.Delete(ctx, fmt.Sprintf("%s:page=1:limit=%d", model.ArticleKey, model.CacheableLimit))
+	err = r.cache.Delete(ctx, fmt.Sprintf("%s:page=1:limit=%d", model.ArticleKey, model.CacheableLimit))
+	if err != nil {
+		log.Warn("failed to delete cache articles")
+	}
 
 	return article, nil
 }

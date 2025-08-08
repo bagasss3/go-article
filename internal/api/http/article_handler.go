@@ -8,6 +8,8 @@ import (
 	"github.com/bagasss3/go-article/pkg/model"
 	"github.com/bagasss3/go-article/pkg/response"
 	"github.com/labstack/echo/v4"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type articleHandler struct {
@@ -31,15 +33,17 @@ func (h *articleHandler) getAll(c echo.Context) error {
 	var query model.ArticleQuery
 
 	if err := c.Bind(&query); err != nil {
+		log.Error(err)
 		return response.ResponseInterfaceError(c, http.StatusBadRequest, err.Error(), config.BadRequest)
 	}
 
 	articles, total, err := h.articleService.FindAll(c.Request().Context(), query)
 	if err != nil {
+		log.Error(err)
 		return handleError(c, err)
 	}
 
-	return response.ResponseInterfaceTotal(c, 200, articles, "List Article", int(total))
+	return response.ResponseInterfaceTotal(c, http.StatusOK, articles, "List Article", int(total))
 }
 
 func (h *articleHandler) create(c echo.Context) error {
@@ -55,6 +59,7 @@ func (h *articleHandler) create(c echo.Context) error {
 
 	result, err := h.articleService.Create(c.Request().Context(), req)
 	if err != nil {
+		log.Error(err)
 		return handleError(c, err)
 	}
 

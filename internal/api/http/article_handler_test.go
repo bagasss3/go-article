@@ -60,6 +60,21 @@ func TestArticleHandler_Create(t *testing.T) {
 		require.Equal(t, http.StatusCreated, rec.Code)
 	})
 
+	t.Run("bind error", func(t *testing.T) {
+		service := new(MockArticleService)
+		handler := NewArticleHandler(service)
+
+		body := `{"author_id":"invalid-json"`
+		req := httptest.NewRequest(http.MethodPost, "/article", strings.NewReader(body))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := handler.create(c)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
 	t.Run("validation error", func(t *testing.T) {
 		service := new(MockArticleService)
 		handler := NewArticleHandler(service)
@@ -123,6 +138,21 @@ func TestArticleHandler_GetAll(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
 
+	t.Run("validation error", func(t *testing.T) {
+		service := new(MockArticleService)
+		handler := NewArticleHandler(service)
+
+		body := `{"title":"T","body":"B"}`
+		req := httptest.NewRequest(http.MethodPost, "/article", strings.NewReader(body))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := handler.create(c)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
 	t.Run("bind error", func(t *testing.T) {
 		service := new(MockArticleService)
 		handler := NewArticleHandler(service)
@@ -152,4 +182,30 @@ func TestArticleHandler_GetAll(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
+}
+
+func TestArticleHandler_Register(t *testing.T) {
+	service := new(MockArticleService)
+	handler := NewArticleHandler(service)
+
+	e := echo.New()
+	g := e.Group("/api")
+
+	handler.Register(g)
+
+	routes := e.Routes()
+	require.True(t, len(routes) > 0)
+
+	foundGetRoute := false
+	foundPostRoute := false
+	for _, route := range routes {
+		if route.Method == "GET" && route.Path == "/api/article" {
+			foundGetRoute = true
+		}
+		if route.Method == "POST" && route.Path == "/api/article" {
+			foundPostRoute = true
+		}
+	}
+	require.True(t, foundGetRoute, "GET route should be registered")
+	require.True(t, foundPostRoute, "POST route should be registered")
 }

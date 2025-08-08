@@ -29,6 +29,11 @@ type Article struct {
 	Author string `json:"author"`
 }
 
+type CachedArticles struct {
+	Results []*Article `json:"results"`
+	Total   int        `json:"total"`
+}
+
 type CreateArticleRequest struct {
 	AuthorID string `json:"author_id" validate:"required,uuid"`
 	Title    string `json:"title" validate:"required,min=3,max=255"`

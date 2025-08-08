@@ -176,6 +176,23 @@ func TestArticleService_FindAll(t *testing.T) {
 		assert.Equal(t, expected, res)
 	})
 
+	t.Run("empty articles", func(t *testing.T) {
+		expected := []*model.Article{}
+		mockArticleRepo.EXPECT().
+			FindAll(gomock.Any(), gomock.Any()).
+			Return(nil, 0, nil)
+
+		res, total, err := articleService.FindAll(ctx, model.ArticleQuery{
+			Query: "keyword",
+			Page:  1,
+			Limit: 10,
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, expected, res)
+		assert.Equal(t, 0, total)
+	})
+
 	t.Run("error from repo", func(t *testing.T) {
 		mockArticleRepo.EXPECT().
 			FindAll(gomock.Any(), gomock.Any()).

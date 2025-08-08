@@ -34,14 +34,6 @@ func TestArticleRepository_Create(t *testing.T) {
 		result, err := repo.Create(ctx, article)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-
-		key := "article:page=1:limit=10"
-		err = kit.cache.Get(ctx, key, &struct {
-			Results []*model.Article
-			Total   int
-		}{})
-		assert.Error(t, err)
-		assert.EqualError(t, err, "cache miss")
 	})
 
 	t.Run("insert error", func(t *testing.T) {
@@ -51,6 +43,19 @@ func TestArticleRepository_Create(t *testing.T) {
 
 		_, err := repo.Create(ctx, article)
 		require.Error(t, err)
+	})
+
+	t.Run("delete cache error", func(t *testing.T) {
+		kit.mockCache.DelShouldError = true
+		defer func() { kit.mockCache.DelShouldError = false }()
+
+		kit.mock.ExpectQuery("INSERT INTO articles").
+			WithArgs(sqlmock.AnyArg(), article.AuthorID, article.Title, article.Body).
+			WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(time.Now()))
+
+		result, err := repo.Create(ctx, article)
+		require.NoError(t, err)
+		require.NotNil(t, result)
 	})
 }
 
@@ -156,5 +161,47 @@ func TestArticleRepository_FindAll(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, total)
 		assert.Len(t, res, 1)
+	})
+
+	t.Run("cache hit returns early", func(t *testing.T) {
+		filter := model.ArticleQuery{
+			Page:  1,
+			Limit: model.CacheableLimit,
+		}
+		key := "article:page=1:limit=10"
+		cached := model.CachedArticles{
+			Results: []*model.Article{
+				{ID: uuid.New(), Title: "From Cache"},
+			},
+			Total: 1,
+		}
+		err := kit.cache.Set(ctx, key, cached, time.Minute)
+		require.NoError(t, err)
+
+		res, total, err := repo.FindAll(ctx, filter)
+		require.NoError(t, err)
+		require.Len(t, res, 1)
+		assert.Equal(t, "From Cache", res[0].Title)
+		assert.Equal(t, 1, total)
+	})
+
+	t.Run("cache set error", func(t *testing.T) {
+		kit.mockCache.SetShouldError = true
+		defer func() { kit.mockCache.SetShouldError = false }()
+
+		rows := sqlmock.NewRows([]string{"id", "author_id", "name", "title", "body", "created_at"}).
+			AddRow(uuid.New(), uuid.New(), "Author", "Title", "Body", time.Now())
+
+		kit.mock.ExpectQuery("SELECT a.id, a.author_id").
+			WillReturnRows(rows)
+
+		kit.mock.ExpectQuery("SELECT COUNT\\(\\*\\)").
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+		filter := model.ArticleQuery{Page: 1, Limit: 10}
+		res, total, err := repo.FindAll(ctx, filter)
+		require.NoError(t, err)
+		assert.NotNil(t, res)
+		assert.Equal(t, 1, total)
 	})
 }

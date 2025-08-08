@@ -50,7 +50,7 @@ func TestAuthorRepository_FindByID(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		missingID := uuid.New()
-		rows := sqlmock.NewRows([]string{"id", "name"}) 
+		rows := sqlmock.NewRows([]string{"id", "name"})
 
 		kit.mock.ExpectQuery("SELECT id, name FROM authors WHERE id =").
 			WithArgs(missingID).
@@ -71,6 +71,29 @@ func TestAuthorRepository_FindByID(t *testing.T) {
 		res, err := repo.FindByID(ctx, brokenID)
 		require.Error(t, err)
 		require.Nil(t, res)
+	})
+
+	t.Run("db found but cache set fails", func(t *testing.T) {
+		newID := uuid.New()
+
+		kit.mockCache.SetShouldError = true
+		defer func() { kit.mockCache.SetShouldError = false }()
+
+		rows := sqlmock.NewRows([]string{"id", "name"}).
+			AddRow(newID, "Cache Fail")
+
+		kit.mock.ExpectQuery("SELECT id, name FROM authors WHERE id =").
+			WithArgs(newID).
+			WillReturnRows(rows)
+
+		res, err := repo.FindByID(ctx, newID)
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.Equal(t, "Cache Fail", res.Name)
+
+		var cached model.Author
+		err = kit.cache.Get(ctx, model.AuthorKey+":"+newID.String(), &cached)
+		require.Error(t, err)
 	})
 }
 

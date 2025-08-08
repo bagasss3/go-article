@@ -10,20 +10,24 @@ import (
 )
 
 type repoTestKit struct {
-	db     *sql.DB
-	mock   sqlmock.Sqlmock
-	cache  cache.Cache
-	closer func()
+	db        *sql.DB
+	mock      sqlmock.Sqlmock
+	cache     cache.Cache
+	mockCache *cache.MockCache
+	closer    func()
 }
 
 func initializeRepoTestKit(t *testing.T) *repoTestKit {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
+	mockCache := cache.NewMockCache()
+
 	return &repoTestKit{
-		db:    db,
-		mock:  mock,
-		cache: cache.NewMockCache(),
+		db:        db,
+		mock:      mock,
+		cache:     mockCache,
+		mockCache: mockCache,
 		closer: func() {
 			_ = db.Close()
 		},

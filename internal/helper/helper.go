@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -35,4 +37,24 @@ func GetValueBetween(value string, a string, b string) string {
 		return ""
 	}
 	return value[posFirstAdjusted:posLast]
+}
+
+func ToJSON(v any) string {
+	if v == nil {
+		return "{}"
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface:
+		if rv.IsNil() {
+			return "{}"
+		}
+	}
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }

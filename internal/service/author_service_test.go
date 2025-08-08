@@ -43,7 +43,8 @@ func TestAuthorService_FindByID(t *testing.T) {
 			Return(nil, nil)
 
 		res, err := service.FindByID(ctx, uid.String())
-		assert.NoError(t, err)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), customErrors.ErrRecordNotFound.Error())
 		assert.Nil(t, res)
 	})
 
