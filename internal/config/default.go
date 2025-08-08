@@ -9,4 +9,10 @@ const (
 	DefaultAccessTokenDuration  time.Duration = 1 * time.Hour
 	DefaultRefreshTokenDuration time.Duration = 24 * time.Hour * 7 // 7 days
 	DefaultRedisExpiredDuration time.Duration = 5 * time.Minute
+	DefaultDBRetryAttempts      int           = 3
+	DefaultDBPingInterval       time.Duration = 1 * time.Second
+
+	// Status
+	InternalServerError string = "Internal Server Error"
+	BadRequest          string = "Bad Request"
 )

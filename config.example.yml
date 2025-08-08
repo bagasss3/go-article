@@ -1,0 +1,16 @@
+env: "development"
+port: "8000"
+database:
+  host: "article_postgres:5432"
+  database: "article_db"
+  username: "postgres"
+  password: "test123"
+  maxIdleConns: 5
+  maxOpenConns: 20
+  connMaxLifeTime: "1h"
+  connMaxIdleTime: "10m"
+redis:
+  host: "article_redis:6379"
+  db: 10
+  exp: "5m"
+  password: "Jordyaja1234"

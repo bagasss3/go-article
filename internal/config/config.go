@@ -78,6 +78,18 @@ func ConnMaxIdleTime() time.Duration {
 	return helper.ParseTimeDuration(time, DefaultConnMaxIdleTime)
 }
 
+func DBRetryAttempts() int {
+	if viper.GetInt("database.retryAttempts") > 0 {
+		return viper.GetInt("database.retryAttempts")
+	}
+	return DefaultDBRetryAttempts
+}
+
+func DBPingInterval() time.Duration {
+	cfg := viper.GetString("database.pingInterval")
+	return helper.ParseTimeDuration(cfg, DefaultDBPingInterval)
+}
+
 func RedisHost() string {
 	return viper.GetString("redis.host")
 }

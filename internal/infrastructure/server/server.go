@@ -36,7 +36,7 @@ func (s *HTTPServer) Start(port string) error {
 }
 
 func customHTTPErrorHandler(err error, c echo.Context) {
-	// Generate a unique request ID (use a library or header for real-world scenarios)
+	// Generate a unique request ID
 	requestID := c.Response().Header().Get(echo.HeaderXRequestID)
 	if requestID == "" {
 		requestID = "unknown"
@@ -46,7 +46,6 @@ func customHTTPErrorHandler(err error, c echo.Context) {
 	response := model.JsonResponsError{
 		RequestId:    requestID,
 		StatusCode:   http.StatusInternalServerError,
-		ErrorCode:    http.StatusInternalServerError,
 		ErrorMessage: "Internal Server Error",
 	}
 
