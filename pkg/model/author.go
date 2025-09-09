@@ -11,7 +11,7 @@ var (
 )
 
 type Author struct {
-	ID   uuid.UUID `json:"id"`
+	ID   uuid.UUID `json:"id" gorm:"primaryKey"`
 	Name string    `json:"name"`
 }
 

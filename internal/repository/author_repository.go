@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 
@@ -11,14 +10,15 @@ import (
 	"github.com/bagasss3/go-article/pkg/model"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 type authorRepository struct {
-	db    *sql.DB
+	db    *gorm.DB
 	cache cache.Cache
 }
 
-func NewAuthorRepository(db *sql.DB, cache cache.Cache) model.AuthorRepository {
+func NewAuthorRepository(db *gorm.DB, cache cache.Cache) model.AuthorRepository {
 	return &authorRepository{
 		db:    db,
 		cache: cache,
@@ -33,19 +33,20 @@ func (r *authorRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.A
 		return &author, nil
 	}
 
-	query := `SELECT id, name FROM authors WHERE id = $1`
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&author.ID, &author.Name)
+	err := r.db.WithContext(ctx).Table("authors").
+		Where("id = ?", id).
+		First(&author).Error
+	
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		log.Error(err)
 		return nil, err
 	}
 
-	err = r.cache.Set(ctx, key, &author, config.RedisExpired())
-	if err != nil {
-		log.Error(err)
+	if err := r.cache.Set(ctx, key, &author, config.RedisExpired()); err != nil {
+		log.Warn("failed to cache author")
 	}
 
 	return &author, nil
@@ -54,8 +55,7 @@ func (r *authorRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.A
 func (r *authorRepository) Create(ctx context.Context, author *model.Author) (*model.Author, error) {
 	author.ID = uuid.New()
 
-	query := `INSERT INTO authors (id, name) VALUES ($1, $2)`
-	_, err := r.db.ExecContext(ctx, query, author.ID, author.Name)
+	err := r.db.WithContext(ctx).Table("authors").Create(author).Error
 	if err != nil {
 		log.Error(err)
 		return nil, err

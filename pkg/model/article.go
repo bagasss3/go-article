@@ -20,7 +20,7 @@ type ArticleQuery struct {
 }
 
 type Article struct {
-	ID        uuid.UUID `json:"id"`
+	ID        uuid.UUID `json:"id" gorm:"primaryKey"`
 	AuthorID  uuid.UUID `json:"author_id"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`

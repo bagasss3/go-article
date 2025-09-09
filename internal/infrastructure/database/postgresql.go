@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -10,62 +9,70 @@ import (
 	"github.com/bagasss3/go-article/internal/config"
 
 	"github.com/jpillora/backoff"
-	_ "github.com/lib/pq"
 	log "github.com/sirupsen/logrus"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
-func InitDB(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := connectWithRetry(ctx, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
+var (
+	// PostgresDB represents gorm DB
+	PostgresDB *gorm.DB
 
-	configurePool(db)
-	go checkConnection(ctx, db, time.NewTicker(config.DBPingInterval()))
+	ErrNilDatabase = errors.New("database connection is nil")
 
-	log.Info("Successfully connected to postgresql database")
-	return db, nil
+	// ctx is the background context for database operations
+	ctx    context.Context
+	cancel context.CancelFunc
+)
+
+type DBOptions struct {
+	MaxIdleConns    int
+	MaxOpenConns    int
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
 }
 
-func connectWithRetry(ctx context.Context, dsn string) (*sql.DB, error) {
-	b := &backoff.Backoff{
-		Min:    200 * time.Millisecond,
-		Max:    2 * time.Second,
-		Factor: 2,
-		Jitter: true,
+func InitDB() {
+	ctx, cancel = context.WithCancel(context.Background())
+
+	opts := getDBOptions()
+	conn, err := openDB(config.DBDSN(), opts)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"dbDSN": config.DBDSN(),
+			"error": err,
+		}).Fatal("Failed to connect to database")
 	}
 
-	maxAttempts := config.DBRetryAttempts()
-	var conn *sql.DB
-	var err error
+	PostgresDB = conn
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			conn, err = sql.Open("postgres", dsn)
-			if err == nil {
-				err = conn.PingContext(ctx)
-			}
-			if err == nil {
-				log.WithField("attempt", attempt).Info("Database ping successful")
-				return conn, nil
-			}
+	// Start connection health check
+	go checkConnection(ctx, time.NewTicker(config.DBPingInterval()))
 
-			log.WithFields(log.Fields{
-				"attempt": attempt,
-				"error":   err,
-			}).Warn("Database connection failed, retrying...")
+	log.Info("Successfully connected to PostgreSQL database")
+}
 
-			time.Sleep(b.Duration())
+// CloseDB properly closes the database connection
+func CloseDB() {
+	if cancel != nil {
+		cancel()
+	}
+
+	if PostgresDB != nil {
+		db, err := PostgresDB.DB()
+		if err != nil {
+			log.WithError(err).Error("Error getting database instance while closing")
+			return
+		}
+		if err := db.Close(); err != nil {
+			log.WithError(err).Error("Error closing database connection")
 		}
 	}
-
-	return nil, fmt.Errorf("could not connect to DB after %d attempts: %w", maxAttempts, err)
 }
 
-func checkConnection(ctx context.Context, db *sql.DB, ticker *time.Ticker) {
+// checkConnection periodically checks the database connection health
+func checkConnection(ctx context.Context, ticker *time.Ticker) {
 	defer ticker.Stop()
 
 	for {
@@ -74,48 +81,130 @@ func checkConnection(ctx context.Context, db *sql.DB, ticker *time.Ticker) {
 			log.Info("Stopping database health check")
 			return
 		case <-ticker.C:
-			if err := pingDB(db); err != nil {
+			if err := pingDB(); err != nil {
 				log.WithError(err).Error("Database ping failed")
-			} else {
-				recordConnectionPoolMetrics(db)
+				if err := reconnectPostgresDBConn(ctx); err != nil {
+					log.WithError(err).Error("Failed to reconnect to database")
+				}
 			}
+			recordConnectionPoolMetrics()
 		}
 	}
 }
 
-func pingDB(db *sql.DB) error {
-	if db == nil {
-		return errors.New("database connection is nil")
+// pingDB checks if the database connection is alive
+func pingDB() error {
+	if PostgresDB == nil {
+		return ErrNilDatabase
 	}
-	ctxPing, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	start := time.Now()
-	err := db.PingContext(ctxPing)
+
+	db, err := PostgresDB.DB()
 	if err != nil {
-		return err
+		return fmt.Errorf("getting database instance: %w", err)
 	}
-	log.WithField("latency", time.Since(start)).Debug("Database ping successful")
+
+	start := time.Now()
+	err = db.Ping()
+	pingDuration := time.Since(start)
+
+	if err != nil {
+		return fmt.Errorf("pinging database: %w", err)
+	}
+
+	log.WithField("latency", pingDuration).Debug("Database ping successful")
 	return nil
 }
 
-func configurePool(db *sql.DB) {
-	db.SetMaxIdleConns(config.MaxIdleConns())
-	db.SetMaxOpenConns(config.MaxOpenConns())
-	db.SetConnMaxLifetime(config.ConnMaxLifeTime())
-	db.SetConnMaxIdleTime(config.ConnMaxIdleTime())
+// reconnectPostgresDBConn attempts to reconnect to the database with exponential backoff
+func reconnectPostgresDBConn(ctx context.Context) error {
+	b := backoff.Backoff{
+		Factor: 2,
+		Jitter: true,
+		Min:    100 * time.Millisecond,
+		Max:    1 * time.Second,
+	}
+	maxAttempts := config.DBRetryAttempts()
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			log.WithField("attempt", attempt+1).Info("Attempting database reconnection")
+
+			conn, err := openDB(config.DBDSN(), getDBOptions())
+			if err == nil && conn != nil {
+				PostgresDB = conn
+				log.Info("Successfully reconnected to database")
+				return nil
+			}
+
+			if err != nil {
+				log.WithError(err).Error("Reconnection attempt failed")
+			}
+
+			time.Sleep(b.Duration())
+			b.Reset()
+		}
+	}
+
+	return fmt.Errorf("failed to reconnect after %d attempts", maxAttempts)
 }
 
-func recordConnectionPoolMetrics(db *sql.DB) {
-	if db == nil {
+// openDB creates a new database connection with the given options
+func openDB(dsn string, opts DBOptions) (*gorm.DB, error) {
+	dialect := postgres.Open(dsn)
+	db, err := gorm.Open(dialect, &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{
+			SingularTable: true,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("getting database instance: %w", err)
+	}
+
+	sqlDB.SetMaxIdleConns(opts.MaxIdleConns)
+	sqlDB.SetMaxOpenConns(opts.MaxOpenConns)
+	sqlDB.SetConnMaxLifetime(opts.ConnMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(opts.ConnMaxIdleTime)
+
+	return db, nil
+}
+
+// getDBOptions returns the database options from config
+func getDBOptions() DBOptions {
+	return DBOptions{
+		MaxIdleConns:    config.MaxIdleConns(),
+		MaxOpenConns:    config.MaxOpenConns(),
+		ConnMaxLifetime: config.ConnMaxLifeTime(),
+		ConnMaxIdleTime: config.ConnMaxIdleTime(),
+	}
+}
+
+// recordConnectionPoolMetrics records database connection pool metrics
+func recordConnectionPoolMetrics() {
+	if PostgresDB == nil {
 		return
 	}
+
+	db, err := PostgresDB.DB()
+	if err != nil {
+		log.WithError(err).Error("Failed to get database stats")
+		return
+	}
+
 	stats := db.Stats()
 	log.WithFields(log.Fields{
-		"maxOpen": stats.MaxOpenConnections,
-		"open":    stats.OpenConnections,
-		"inUse":   stats.InUse,
-		"idle":    stats.Idle,
-		"waits":   stats.WaitCount,
-		"waitDur": stats.WaitDuration,
-	}).Debug("DB connection pool stats")
+		"maxOpenConnections": stats.MaxOpenConnections,
+		"openConnections":    stats.OpenConnections,
+		"inUse":              stats.InUse,
+		"idle":               stats.Idle,
+		"waitCount":          stats.WaitCount,
+		"waitDuration":       stats.WaitDuration,
+	}).Debug("Database connection pool stats")
 }

@@ -17,9 +17,9 @@ CREATE TABLE articles (
 
 CREATE INDEX idx_articles_author_id ON articles(author_id);
 CREATE INDEX idx_articles_created_at ON articles(created_at DESC);
-CREATE INDEX idx_articles_title_search ON articles USING GIN (to_tsvector('english', title));
-CREATE INDEX idx_articles_body_search ON articles USING GIN (to_tsvector('english', body));
-CREATE INDEX idx_articles_title_body_search ON articles USING GIN (to_tsvector('english', title || ' ' || body));
+CREATE INDEX idx_articles_title_search ON articles USING GIN (to_tsvector('simple', title));
+CREATE INDEX idx_articles_body_search ON articles USING GIN (to_tsvector('simple', body));
+CREATE INDEX idx_articles_title_body_search ON articles USING GIN (to_tsvector('simple', title || ' ' || body));
 CREATE INDEX idx_authors_name ON authors(name);
 
 -- +goose StatementEnd

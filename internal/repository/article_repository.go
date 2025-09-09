@@ -2,74 +2,53 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"strings"
+	"sync"
 
 	"github.com/bagasss3/go-article/internal/config"
 	"github.com/bagasss3/go-article/internal/infrastructure/cache"
 	"github.com/bagasss3/go-article/pkg/model"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 type articleRepository struct {
-	db    *sql.DB
+	db    *gorm.DB
 	cache cache.Cache
 }
 
-func NewArticleRepository(db *sql.DB, cache cache.Cache) model.ArticleRepository {
+func NewArticleRepository(db *gorm.DB, cache cache.Cache) model.ArticleRepository {
 	return &articleRepository{
 		db:    db,
 		cache: cache,
 	}
 }
 
-func (r *articleRepository) FindAll(ctx context.Context, filter model.ArticleQuery) ([]*model.Article, int, error) {
-	var (
-		args       []any
-		conditions []string
-	)
-
-	cacheableLimit := filter.Limit
-	if cacheableLimit <= 0 {
-		cacheableLimit = model.CacheableLimit
+func (r *articleRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Article, error) {
+	articleKey := fmt.Sprintf("%s:detail:%s", model.ArticleKey, id.String())
+	var article model.Article
+	if err := r.cache.Get(ctx, articleKey, &article); err == nil {
+		return &article, nil
 	}
 
-	shouldCache := filter.Query == "" && filter.Page == 1 && cacheableLimit == model.CacheableLimit
-	var cacheKey string
-	if shouldCache {
-		cacheKey = fmt.Sprintf("%s:page=%d:limit=%d", model.ArticleKey, filter.Page, filter.Limit)
-
-		var cached model.CachedArticles
-		if err := r.cache.Get(ctx, cacheKey, &cached); err == nil {
-			return cached.Results, cached.Total, nil
+	err := r.db.WithContext(ctx).Take(&article, "id = ?", id).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
 		}
+		log.Error(err)
+		return nil, err
 	}
 
-	baseQuery := `
-		SELECT a.id, a.author_id, au.name, a.title, a.body, a.created_at
-		FROM articles a
-		JOIN authors au ON a.author_id = au.id
-	`
-
-	argPos := 1
-	if filter.Query != "" {
-		conditions = append(conditions, fmt.Sprintf("(a.title ILIKE $%d OR a.body ILIKE $%d)", argPos, argPos+1))
-		args = append(args, "%"+filter.Query+"%", "%"+filter.Query+"%")
-		argPos += 2
-	}
-	if filter.Author != "" {
-		conditions = append(conditions, fmt.Sprintf("au.name ILIKE $%d", argPos))
-		args = append(args, "%"+filter.Author+"%")
-		argPos++
+	if err := r.cache.Set(ctx, articleKey, &article, config.RedisExpired()); err != nil {
+		log.Warn("failed to cache individual article")
 	}
 
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = " WHERE " + strings.Join(conditions, " AND ")
-	}
+	return &article, nil
+}
 
+func (r *articleRepository) FindAll(ctx context.Context, filter model.ArticleQuery) ([]*model.Article, int, error) {
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 10
@@ -79,87 +58,139 @@ func (r *articleRepository) FindAll(ctx context.Context, filter model.ArticleQue
 		offset = 0
 	}
 
-	args = append(args, limit, offset)
-	limitPos := argPos
-	offsetPos := argPos + 1
+	cacheKey := fmt.Sprintf("%s:%d:%d", model.ArticleKey, filter.Page, limit)
+	var cachedIDs []uuid.UUID
+	if filter.Query == "" && filter.Author == "" {
+		if err := r.cache.Get(ctx, cacheKey, &cachedIDs); err == nil {
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			var results []*model.Article
 
-	fullQuery := fmt.Sprintf(
-		"%s%s ORDER BY a.created_at DESC LIMIT $%d OFFSET $%d",
-		baseQuery,
-		whereClause,
-		limitPos,
-		offsetPos,
-	)
+			for _, id := range cachedIDs {
+				wg.Add(1)
+				go func(articleID uuid.UUID) {
+					defer wg.Done()
+					article, err := r.FindByID(ctx, articleID)
+					if err == nil && article != nil {
+						mu.Lock()
+						results = append(results, article)
+						mu.Unlock()
+					}
+				}(id)
+			}
+			wg.Wait()
 
-	baseCount := `
-		SELECT COUNT(*)
-		FROM articles a
-		JOIN authors au ON a.author_id = au.id
-	`
-	countQuery := baseCount + whereClause
-
-	rows, err := r.db.QueryContext(ctx, fullQuery, args...)
-	if err != nil {
-		log.Error(err)
-		return nil, 0, err
+			if len(results) > 0 {
+				totalKey := fmt.Sprintf("%s:total", model.ArticleKey)
+				var total int64
+				if err := r.cache.Get(ctx, totalKey, &total); err == nil {
+					return results, int(total), nil
+				}
+			}
+		}
 	}
-	defer rows.Close()
 
-	var results []*model.Article
-	for rows.Next() {
-		var a model.Article
-		if err := rows.Scan(&a.ID, &a.AuthorID, &a.Author, &a.Title, &a.Body, &a.CreatedAt); err != nil {
+	query := r.db.WithContext(ctx).Model(&model.Article{})
+
+	if filter.Query != "" {
+		query = query.Where("to_tsvector('simple', title || ' ' || body) @@ plainto_tsquery('simple', ?)", filter.Query)
+	}
+
+	if filter.Author != "" {
+		var authorIDs []uuid.UUID
+		err := r.db.WithContext(ctx).Model(&model.Author{}).
+			Where("to_tsvector('simple', name) @@ plainto_tsquery('simple', ?)", filter.Author).
+			Pluck("id", &authorIDs).Error
+		if err != nil {
 			log.Error(err)
 			return nil, 0, err
 		}
-		results = append(results, &a)
+		if len(authorIDs) == 0 {
+			return []*model.Article{}, 0, nil
+		}
+		query = query.Where("author_id IN ?", authorIDs)
 	}
 
-	countArgs := args[:len(args)-2]
-	var total int
-	err = r.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		log.Error(err)
+		return nil, 0, err
+	}
+
+	var results []*model.Article
+	err := query.Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&results).Error
 	if err != nil {
 		log.Error(err)
 		return nil, 0, err
 	}
 
-	if shouldCache {
-		if err := r.cache.Set(ctx, cacheKey, model.CachedArticles{
-			Results: results,
-			Total:   total,
-		}, config.RedisExpired()); err != nil {
-			log.Warn("failed to cache articles")
+	if filter.Query == "" && filter.Author == "" {
+		for _, article := range results {
+			articleKey := fmt.Sprintf("%s:detail:%s", model.ArticleKey, article.ID.String())
+			if err := r.cache.Set(ctx, articleKey, article, config.RedisExpired()); err != nil {
+				log.Warn("failed to cache individual article")
+			}
+		}
+
+		var articleIDs []uuid.UUID
+		for _, article := range results {
+			articleIDs = append(articleIDs, article.ID)
+		}
+		if err := r.cache.Set(ctx, cacheKey, articleIDs, config.RedisExpired()); err != nil {
+			log.Warn("failed to cache article IDs")
+		}
+
+		totalKey := fmt.Sprintf("%s:total", model.ArticleKey)
+		if err := r.cache.Set(ctx, totalKey, total, config.RedisExpired()); err != nil {
+			log.Warn("failed to cache total count")
 		}
 	}
 
-	return results, total, nil
+	return results, int(total), nil
 }
 
 func (r *articleRepository) Create(ctx context.Context, article *model.Article) (*model.Article, error) {
 	article.ID = uuid.New()
 
-	query := `
-		INSERT INTO articles (id, author_id, title, body, created_at)
-		VALUES ($1, $2, $3, $4, NOW())
-		RETURNING created_at
-	`
+	result := r.db.WithContext(ctx).Table("articles").Create(map[string]interface{}{
+		"id":         article.ID,
+		"author_id":  article.AuthorID,
+		"title":      article.Title,
+		"body":       article.Body,
+		"created_at": "NOW()",
+	})
 
-	err := r.db.QueryRowContext(
-		ctx,
-		query,
-		article.ID,
-		article.AuthorID,
-		article.Title,
-		article.Body,
-	).Scan(&article.CreatedAt)
+	if result.Error != nil {
+		log.Error(result.Error)
+		return nil, result.Error
+	}
+
+	var createdArticle model.Article
+	err := r.db.WithContext(ctx).Table("articles").
+		Where("id = ?", article.ID).
+		Select("created_at").
+		Scan(&createdArticle).Error
 	if err != nil {
 		log.Error(err)
 		return nil, err
 	}
+	article.CreatedAt = createdArticle.CreatedAt
 
-	err = r.cache.Delete(ctx, fmt.Sprintf("%s:page=1:limit=%d", model.ArticleKey, model.CacheableLimit))
-	if err != nil {
-		log.Warn("failed to delete cache articles")
+	totalKey := fmt.Sprintf("%s:total", model.ArticleKey)
+	if err := r.cache.Delete(ctx, totalKey); err != nil {
+		log.Warn("failed to delete total count cache")
+	}
+
+	for page := 1; page <= 5; page++ {
+		for limit := 10; limit <= 50; limit += 10 {
+			cacheKey := fmt.Sprintf("%s:%d:%d", model.ArticleKey, page, limit)
+			if err := r.cache.Delete(ctx, cacheKey); err != nil {
+				log.Warn("failed to delete pagination cache")
+			}
+		}
 	}
 
 	return article, nil

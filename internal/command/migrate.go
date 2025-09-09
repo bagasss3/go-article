@@ -1,11 +1,8 @@
 package command
 
 import (
-	"context"
-
 	log "github.com/sirupsen/logrus"
 
-	"github.com/bagasss3/go-article/internal/config"
 	"github.com/bagasss3/go-article/internal/infrastructure/database"
 	"github.com/pressly/goose"
 	"github.com/spf13/cobra"
@@ -31,19 +28,20 @@ func migration(cmd *cobra.Command, args []string) {
 		log.Error(err)
 	}
 	goose.SetTableName("schema_migrations")
-	ctx := context.Background()
 
-	db, err := database.InitDB(ctx, config.DBDSN())
+	database.InitDB()
+	defer database.CloseDB()
+
+	sqlDB, err := database.PostgresDB.DB()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to connect to db: %v", err)
 	}
-	defer db.Close()
 
 	var dir string = "./database/migrations"
 	if direction == "up" {
-		err = goose.Up(db, dir)
+		err = goose.Up(sqlDB, dir)
 	} else {
-		err = goose.Down(db, dir)
+		err = goose.Down(sqlDB, dir)
 	}
 
 	if err != nil {

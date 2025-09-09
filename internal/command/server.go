@@ -43,11 +43,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	defer cancel()
 
 	// Initialize DBs
-	db, err := database.InitDB(ctx, config.DBDSN())
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
+	database.InitDB()
+	defer database.CloseDB()
 
 	redisConn := database.NewRedisConn(config.RedisHost())
 	defer redisConn.Close()
@@ -62,8 +59,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	corsMiddleware := middleware.ModuleCorsMiddleware(httpServer.Engine())
 	corsMiddleware.Setup()
 
-	articleRepository := repository.NewArticleRepository(db, cacher)
-	authorRepository := repository.NewAuthorRepository(db, cacher)
+	articleRepository := repository.NewArticleRepository(database.PostgresDB, cacher)
+	authorRepository := repository.NewAuthorRepository(database.PostgresDB, cacher)
 
 	articleService := service.NewArticleService(articleRepository, authorRepository)
 	authorService := service.NewAuthorService(authorRepository)
