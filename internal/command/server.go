@@ -60,12 +60,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	corsMiddleware.Setup()
 
 	articleRepository := repository.NewArticleRepository(database.PostgresDB, cacher)
-	authorRepository := repository.NewAuthorRepository(database.PostgresDB, cacher)
 
-	articleService := service.NewArticleService(articleRepository, authorRepository)
-	authorService := service.NewAuthorService(authorRepository)
+	articleService := service.NewArticleService(articleRepository)
 
-	registerHandlers(httpServer.Engine(), articleService, authorService)
+	registerHandlers(httpServer.Engine(), articleService)
 
 	// Setup signal handling
 	signalCh := make(chan os.Signal, 1)
@@ -95,9 +93,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	log.Info("Server shutdown complete")
 }
 
-func registerHandlers(e *echo.Echo, articleSvc model.ArticleMethodService, authorSvc model.AuthorMethodService) {
+func registerHandlers(e *echo.Echo, articleSvc model.ArticleMethodService) {
 	v1 := e.Group("/api/v1")
 
 	handler.NewArticleHandler(articleSvc).Register(v1)
-	handler.NewAuthorHandler(authorSvc).Register(v1)
 }

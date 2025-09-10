@@ -13,13 +13,11 @@ import (
 
 type articleService struct {
 	articleRepository model.ArticleRepository
-	authorRepository  model.AuthorRepository
 }
 
-func NewArticleService(articleRepository model.ArticleRepository, authorRepository model.AuthorRepository) model.ArticleMethodService {
+func NewArticleService(articleRepository model.ArticleRepository) model.ArticleMethodService {
 	return &articleService{
 		articleRepository: articleRepository,
-		authorRepository:  authorRepository,
 	}
 }
 
@@ -53,17 +51,17 @@ func (s *articleService) Create(ctx context.Context, req *model.CreateArticleReq
 		return nil, err
 	}
 
-	author, err := s.authorRepository.FindByID(ctx, authorID)
-	if err != nil {
-		log.Error(err)
-		return nil, err
-	}
+	// author, err := s.authorRepository.FindByID(ctx, authorID)
+	// if err != nil {
+	// 	log.Error(err)
+	// 	return nil, err
+	// }
 
-	if author == nil {
-		err := errors.New(errors.ErrRecordNotFound, "author not found")
-		log.Error(err)
-		return nil, err
-	}
+	// if author == nil {
+	// 	err := errors.New(errors.ErrRecordNotFound, "author not found")
+	// 	log.Error(err)
+	// 	return nil, err
+	// }
 
 	article := &model.Article{
 		ID:       uuid.New(),
